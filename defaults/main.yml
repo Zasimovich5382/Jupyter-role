@@ -1,0 +1,8 @@
+---
+jupyter_python_executable: python3
+jupyter_package_manager: pip3
+jupyter_package_manager_become: no
+jupyter_package_state: latest
+jupyter_password: 'sha1:b3af1b4adee9:9e86cb52435cc24db0b487451c10f6d348734645'
+jupyter_open_browser: false
+jupyter_ip: 'localhost'
