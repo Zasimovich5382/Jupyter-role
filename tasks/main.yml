@@ -1,141 +1,100 @@
 ---
-- name: Ensure necessary packages are installed
-  apt: 
-    name: "{{ jupyter_pkgs }}"
-    state: present
-    update_cache: yes
-  
-- block:
-  - name: Create a dedicated group to run Jupyter
-    group:
-      name: jupyter
-      gid: 2841
-      system: yes
-      state: present
-
-  - name: Create a dedicated user to run Jupyter
-    user:
-      name: jupyter
-      groups: jupyter
-      uid: 2841
-      system: yes
-      createhome: yes
-      state: present
-
-  - name: Setup Jupyter notebook directory
-    file:
-      path: /data
-      state: directory
-      owner: jupyter
-      group: jupyter
-      mode: 0777
-  - name: Create notebook directory
-    file:
-      path: /data/notebooks
-      state: directory
-      owner: jupyter
-      group: jupyter
-      mode: 0755
-
-- name: Check to see if the Jupyter environment exists
-  stat: 
-    path: /data/jupyter
-  register: environment_exists
-  become_user: jupyter
-- block:
-  - name: Install virtual environment
-    pip:
-      name: virtualenv
-      executable: pip3
-      state: latest
-  - name: Create virtualenv root directory
-    file:
-      path: /data/jupyter
-      state: directory
-      owner: jupyter
-      group: jupyter
-      mode: 0755
-  - name: Set up virtual environment
-    shell: virtualenv -p python3 /data/jupyter
-    become_user: jupyter
-    changed_when: no
-  - name: Copy requirements.txt file
-    copy: 
-      src: requirements.txt
-      dest: /tmp/jupyterhub_requirements.txt
-    become_user: jupyter
-  - name: Install requirements.txt
-    pip: 
-      requirements: /tmp/jupyterhub_requirements.txt
-      virtualenv: /data/jupyter
-      extra_args: --upgrade
-    become_user: jupyter
-  when: environment_exists.stat.exists == False
-- name: Check to see if the Jupyter configuration file exists
-  stat: 
-    path: /home/jupyter/.jupyter/jupyterhub_config.py
-  register: config_exists
-  become_user: jupyter
-- block:
-  - name: Create .jupyter directory
-    file:
-      path: /home/jupyter/.jupyter
-      state: directory
-      owner: jupyter
-      group: jupyter
-      mode: 0755
-  - name: Apply Jupyter config
-    template:
-      src: jupyterhub_config.py.j2
-      dest: '{{ jupyter_config_filename }}'
-      mode: 0644
-      force: yes
-    become_user: jupyter
-  when: config_exists.stat.exists == False
-
-- block:
-  - name: Create SSL certificates
-    command: openssl req -new -nodes -x509 -subj "/C={{ ssl_country }}/ST={{ ssl_state }}/L={{ ssl_city }}/O={{ ssl_org }}/CN={{ jupyter_domain }}" -days 3650 -keyout {{ key_out }} -out {{ cert_out }} -extensions v3_ca creates={{ cert_out }}
-  - name: Correct permissions for certificates (key)
-    file:
-      path: "{{ key_out }}"
-      owner: jupyter
-      group: jupyter
-      mode: 0755
-  - name: Correct permissions for certificates (cert)
-    file:
-      path: "{{ cert_out }}"
-      owner: jupyter
-      group: jupyter
-      mode: 0755
-
-- block:
-  - name: Create .jupyter/custom directory
-    file:
-      path: /home/jupyter/.jupyter/custom
-      state: directory
-      owner: jupyter
-      group: jupyter
-      mode: 0755
-  - name: Copy custom.css file
-    copy: 
-      src: custom.css
-      dest: /home/jupyter/.jupyter/custom/custom.css
-    become_user: jupyter
-
-- name: Make Jupyter a systemd service
-  template:
-    src: '{{ item }}'
-    dest: '/{{ item }}'
-    owner: root
-    group: root
-    mode: 0755
+- name: Install Python packages
+  become: '{{ jupyter_package_manager_become }}'
+  pip:
+    name: '{{ item }}'
+    state: '{{ jupyter_package_state }}'
+    executable: '{{ jupyter_package_manager }}'
   with_items:
-    - 'etc/systemd/system/jupyter.service'
+    - ipython
+    - ipykernel
+    - jupyter
 
-- name: Start Jupyter notebook
-  systemd:
-    daemon_reload: yes
-    enabled: yes
-    name: jupyter
-    state: restarted
+- name: Check if the IPython profile already exists
+  stat:
+    path: '{{ ipython_config_filename }}'
+  register: ipython_config_exists
+
+- name: Create IPython profile
+  when: not ipython_config_exists.stat.exists
+  command: ipython profile create
+  register: ipython_profile_create_output
+  args:
+    creates:
+      - '{{ ipython_config_filename }}'
+      - '{{ ipython_kernel_config_filename }}'
+
+- name: Apply IPython configs
+  block:
+    - name: IPython main config
+      template:
+        src: ipython_config.py.j2
+        dest: '{{ ipython_config_filename }}'
+        force: yes
+        mode: 0644
+
+    - name: IPython kernel config
+      template:
+        src: ipython_kernel_config.py.j2
+        dest: '{{ ipython_kernel_config_filename }}'
+        force: yes
+        mode: 0644
+
+- name: Generate Jupyter password
+  when: jupyter_plaintext_password != ''
+  block:
+    - name: Acquire Jupyter password hash
+      command: '{{ jupyter_python_executable }} -c "from notebook.auth import passwd; print(passwd(''{{ jupyter_plaintext_password }}''));"'
+      register: jupyter_password_output
+      no_log: yes
+      changed_when: no
+
+    - name: Remember Jupyter password hash
+      set_fact:
+        jupyter_password: '{{ jupyter_password_output.stdout }}'
+      changed_when: no
+
+- name: Create Jupyter profile
+  command: jupyter notebook --generate-config
+  args:
+    creates: '{{ jupyter_config_filename }}'
+
+- name: Apply Jupyter config
+  template:
+    src: jupyter_notebook_config.py.j2
+    dest: '{{ jupyter_config_filename }}'
+    mode: 0644
+    force: yes
+
+- name: Install Jupyter as a daemon
+  when: jupyter_daemon_enable
+  block:
+    - name: Find Jupyter server binary
+      command: which jupyter-notebook
+      register: jupyter_server_which_output
+      changed_when: no
+
+    - name: Initialize Jupyter server binary path
+      set_fact:
+        jupyter_daemon_executable: '{{ jupyter_server_which_output.stdout }}'
+      changed_when: no
+
+    - name: Make sure systemd directory exists
+      become: yes
+      file:
+        path: '{{ jupyter_daemon_systemd_dir }}'
+        state: directory
+
+    - name: Create systemd script
+      become: yes
+      template:
+        src: jupyter.service.j2
+        dest: '{{ jupyter_daemon_systemd_filename }}'
+        force: yes
+
+    - name: Enable Jupyter daemon
+      become: yes
+      shell: |
+        systemctl enable jupyter.service
+        systemctl daemon-reload
+        systemctl restart jupyter.service

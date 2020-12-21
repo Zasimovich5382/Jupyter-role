@@ -1,19 +1,14 @@
-jupyter_pkgs:
-  - git
-  - npm
-  - python
-  - python-dev
-  - python-setuptools
-  - python3
-  - python3-dev
-  - python3-pip
-  - python3-setuptools
-  - sudo
-  - apt-transport-https
+---
+# IPython
+ipython_profile_name: default
+ipython_profile_dir: '{{ ansible_env.HOME }}/.ipython/profile_{{ ipython_profile_name }}'
+ipython_config_filename: '{{ ipython_profile_dir }}/ipython_config.py'
+ipython_kernel_config_filename: '{{ ipython_profile_dir }}/ipython_kernel_config.py'
 
 # Jupyter
-jupyter_config_filename: '/home/jupyter/.jupyter/jupyterhub_config.py'
-ssl_country: UK
-ssl_state: GL
-ssl_city: LDN
-ssl_org: JJ
+jupyter_config_filename: '{{ ansible_env.HOME }}/.jupyter/jupyter_notebook_config.py'
+
+# Jupyter daemon
+jupyter_daemon_systemd_dir: '/usr/lib/systemd/system'
+jupyter_daemon_systemd_filename: '{{ jupyter_daemon_systemd_dir }}/jupyter.service'
+jupyter_daemon_pidfile: '/run/jupyter.service.pid'
